@@ -302,6 +302,9 @@ class Handler(BaseHTTPRequestHandler):
                 meta = store.load_meta(sid)
                 if not meta:
                     raise ApiError("Сессия не найдена", 404)
+                if isinstance(meta.get("report"), dict):
+                    meta["report"]["pressure_target"] = store.pressure_target(
+                        store.CAR_DATA.get(meta.get("car_id") or meta.get("car") or "", {}))
                 return self.json(meta)
             if method == "GET" and len(parts) == 4 and parts[2] == "lap":
                 try:

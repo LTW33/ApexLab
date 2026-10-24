@@ -7,8 +7,19 @@ import { toast, closeModals } from "./ui.js";
 import { openImport } from "./importmodal.js";
 import { exportSessionReport, sessionReportText } from "./report.js";
 import { toggleSidebar, cycleWithToast } from "./shell.js";
+import { channel } from "./channel.js";
 
 const TABS = ["analysis", "line", "laps", "errors", "setup"];
+const BETA_TABS = ["analysis", "coach", "line", "laps", "series", "errors", "setup"];
+
+function tabsFor() {
+  const tabs = channel.isBeta() ? BETA_TABS : TABS;
+  const id = currentSessionId();
+  if (channel.isBeta() && id && store.references.some((s) => s.id === id)) {
+    return tabs.filter((key) => key !== "series");
+  }
+  return tabs;
+}
 
 let state = null;
 
@@ -59,12 +70,19 @@ async function copyReport() {
 }
 
 function navCommands() {
-  return [
+  const list = [
     { group: "Навигация", label: "Гараж", hint: `${store.sessions.length} сессий`, icon: "car", run: () => go("#/garage") },
     { group: "Навигация", label: "Пилоты", hint: `${store.drivers.length}`, icon: "users", run: () => go("#/drivers") },
     { group: "Навигация", label: "Сравнение", hint: "траектории", icon: "compare", run: () => go("#/compare") },
     { group: "Навигация", label: "Настройки", hint: "папки и темы", icon: "settings", run: () => go("#/settings") },
   ];
+  if (channel.isBeta()) {
+    list.splice(2, 0, {
+      group: "Навигация", label: "Эталоны", hint: `${store.references?.length || 0} логов`,
+      icon: "target", run: () => go("#/coach"),
+    });
+  }
+  return list;
 }
 
 function actionCommands() {
@@ -76,6 +94,11 @@ function actionCommands() {
         store.load(true).then(() => window.dispatchEvent(new CustomEvent("apex:refresh")));
       },
     }) },
+    ...(channel.isBeta() ? [{ group: "Действия", label: "Загрузить эталон", hint: "лог быстрого пилота", icon: "target",
+      run: () => openImport({ mode: "reference", onDone: () => {
+        store.invalidate();
+        store.load(true).then(() => window.dispatchEvent(new CustomEvent("apex:refresh")));
+      } }) }] : []),
     { group: "Действия", label: "Экспорт отчёта сессии", hint: "Ctrl E", icon: "download",
       run: () => withSession((meta) => exportSessionReport(meta)) },
     { group: "Действия", label: "Скопировать отчёт", hint: "в буфер", icon: "layers", run: copyReport },
@@ -336,12 +359,15 @@ function onGlobalKey(ev) {
     toggleSidebar();
     return;
   }
-  if (ev.altKey && !mod && !ev.shiftKey && /^[1-5]$/.test(ev.key)) {
+  if (ev.altKey && !mod && !ev.shiftKey && /^[1-7]$/.test(ev.key)) {
     const id = currentSessionId();
     if (!id) return;
     ev.preventDefault();
     const query = location.hash.split("?")[1];
-    location.hash = `#/session/${encodeURIComponent(id)}/${TABS[Number(ev.key) - 1]}${query ? `?${query}` : ""}`;
+    const tabs = tabsFor();
+    const tab = tabs[Number(ev.key) - 1];
+    if (!tab) return;
+    location.hash = `#/session/${encodeURIComponent(id)}/${tab}${query ? `?${query}` : ""}`;
     return;
   }
   if (ev.key === "F1" && !isTyping(ev.target)) {

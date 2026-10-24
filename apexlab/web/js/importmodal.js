@@ -8,12 +8,13 @@ import { openModal, toast } from "./ui.js";
 
 const CHUNK = 3;
 
-export function openImport({ onDone } = {}) {
+export function openImport({ onDone, mode = "own" } = {}) {
   const state = {
     folder: store.settings?.motec_path || "",
     files: [],
     selected: new Set(),
     driver: "",
+    reference: mode === "reference",
     importing: false,
     scanned: false,
     finished: false,
@@ -21,8 +22,10 @@ export function openImport({ onDone } = {}) {
   };
 
   const modal = openModal({
-    title: "Импорт телеметрии",
-    sub: "Assetto Corsa Competizione · логи MoTeC (.ld)",
+    title: state.reference ? "Импорт эталона" : "Импорт телеметрии",
+    sub: state.reference
+      ? "Лог быстрого пилота · ApexLab запомнит ориентиры по трассе и машине"
+      : "Assetto Corsa Competizione · логи MoTeC (.ld)",
     body: `
       <div class="field">
         <label for="imp-folder">Папка с логами</label>
@@ -37,6 +40,7 @@ export function openImport({ onDone } = {}) {
         <input class="input" id="imp-driver" placeholder="Например, Иван" autocomplete="off" maxlength="40">
         <div class="hint">В .ld нет имени пилота — укажи его здесь, потом можно поменять.</div>
       </div>
+      <label class="check-all" id="imp-ref"><span class="check${state.reference ? " on" : ""}" data-ref-box>${state.reference ? icon("check", 11) : ""}</span><span><b>Лог быстрого пилота</b> — добавить в эталоны и обновить ориентиры</span></label>
       <div class="row" style="justify-content:space-between">
         <label class="check-all" id="imp-all"><span class="check" data-all-box>${icon("check", 11)}</span><span>Выбрать все новые</span></label>
         <span class="hint" id="imp-summary">—</span>
@@ -62,6 +66,8 @@ export function openImport({ onDone } = {}) {
       const folderHint = box.querySelector("#imp-folder-hint");
       const allEl = box.querySelector("#imp-all");
       const allBox = box.querySelector("[data-all-box]");
+      const refEl = box.querySelector("#imp-ref");
+      const refBox = box.querySelector("[data-ref-box]");
       const runBtn = box.querySelector("#imp-run");
       const progressEl = box.querySelector("#imp-progress");
       const bar = progressEl.querySelector("i");
@@ -140,6 +146,15 @@ export function openImport({ onDone } = {}) {
       });
       box.querySelector("#imp-scan").addEventListener("click", scan);
       inputDriver.addEventListener("input", () => { state.driver = inputDriver.value; });
+      refEl.addEventListener("click", () => {
+        if (state.importing) return;
+        state.reference = !state.reference;
+        refBox.classList.toggle("on", state.reference);
+        refBox.innerHTML = state.reference ? icon("check", 11) : "";
+        hintEl.textContent = state.reference
+          ? "Эталон попадёт в отдельную базу и не смешается с твоими сессиями"
+          : "Файлы с одинаковой телеметрией схлопнутся автоматически";
+      });
 
       async function scan() {
         if (state.importing) return;
@@ -199,7 +214,7 @@ export function openImport({ onDone } = {}) {
           const done = Math.min(i, paths.length);
           setProgress(done / paths.length, `Разбираю телеметрию: ${done} из ${paths.length}`);
           try {
-            const res = await api.importFiles(part, state.driver);
+            const res = await api.importFiles(part, state.driver, state.reference);
             added.push(...(res.added || []));
             skipped.push(...(res.skipped || []));
           } catch (err) {
@@ -252,7 +267,7 @@ export function openImport({ onDone } = {}) {
             <div class="inline-stat"><div class="k">Пилот</div><div class="v">${esc(state.driver || "Пилот")}</div></div>
           </div>
           ${added.length ? `<div>
-            <div class="label" style="margin-bottom:8px">Новые сессии</div>
+            <div class="label" style="margin-bottom:8px">${state.reference ? "Новые эталоны" : "Новые сессии"}</div>
             <div class="file-list">${addedHTML}</div>
           </div>` : `<div class="hint-box warn">${icon("alert", 16)}<span>Ничего не добавлено. Возможно, эти логи уже есть в библиотеке или в них нет пригодной телеметрии.</span></div>`}
           ${skippedHTML ? `<div>

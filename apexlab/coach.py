@@ -377,13 +377,14 @@ def _segment_stats(pack: dict, corner: dict) -> dict:
 
 
 def _corner_comparison(user: dict, ref: dict, corner: dict) -> dict:
-    step = _num(ref.get("step"), 5.0) or 5.0
+    ref_step = _num(ref.get("step"), 5.0) or 5.0
+    user_step = _num(user.get("step"), 5.0) or 5.0
     start = _num(corner.get("start"))
     end = _num(corner.get("end"))
-    du0 = _sample(user.get("t"), step, start)
-    du1 = _sample(user.get("t"), step, end)
-    dr0 = _sample(ref.get("t"), step, start)
-    dr1 = _sample(ref.get("t"), step, end)
+    du0 = _sample(user.get("t"), user_step, start)
+    du1 = _sample(user.get("t"), user_step, end)
+    dr0 = _sample(ref.get("t"), ref_step, start)
+    dr1 = _sample(ref.get("t"), ref_step, end)
     loss = None if None in (du0, du1, dr0, dr1) else (du1 - du0) - (dr1 - dr0)
 
     ref_mech = _corner_mechanics(ref, corner)
@@ -693,7 +694,7 @@ def profile_for(meta: dict, lib: dict | None = None) -> dict | None:
 def reference_candidates(meta: dict, sessions: list[dict]) -> list[dict]:
     track = _track_key(meta)
     car = _car_key(meta)
-    refs = [s for s in sessions if s.get("reference")]
+    refs = [s for s in sessions if s.get("reference") and s.get("id") != meta.get("id")]
     same = [s for s in refs if _track_key(s) == track and _car_key(s) == car]
     if same:
         return sorted(same, key=lambda s: _num(s.get("best_time"), 9e9))
@@ -926,7 +927,8 @@ def _series_sentence(detail: dict | None) -> str | None:
     improved = [c for c in corners if c.get("mean_loss") is not None and c["mean_loss"] < -0.02]
     regressed = [c for c in corners if c.get("mean_loss") is not None and c["mean_loss"] > 0.02]
     if improved:
-        out += f" Прибавка пришла в {improved[0]['name']}."
+        best_gain = min(improved, key=lambda c: _num(c.get("mean_loss")))
+        out += f" Прибавка пришла в {best_gain['name']}."
     if regressed:
         out += f" Дольше всего держится потеря в {regressed[0]['name']}."
     return out
@@ -1023,8 +1025,10 @@ def build_narrative(meta: dict, coach: dict | None, detail: dict | None,
             if lock or spin:
                 text += f" За сессию: блокировок {lock}, пробуксовок {spin}."
             paragraphs.append({"kind": "driving", "text": text})
-            if style.get("throttle_steps") is not None:
-                facts.append(f"Ступени газа: {style.get('throttle_steps')} против {style.get('ref_throttle_steps')} у эталона")
+            steps_you = _num(style.get("throttle_steps"))
+            steps_ref = _num(style.get("ref_throttle_steps"))
+            if steps_you > steps_ref + 1.5:
+                facts.append(f"Ступени газа: {steps_you:.0f} против {steps_ref:.0f} у эталона")
 
     # 4. Car / balance
     if coach:
@@ -1064,7 +1068,10 @@ def build_narrative(meta: dict, coach: dict | None, detail: dict | None,
                 f"{c['name']}: {verb} {phase} (разница {speed:+.0f} км/ч), "
                 f"ориентир — {gain:.3f} с.")
         if (coach.get("style") or {}).get("throttle_steps") is not None:
-            actions.append("Газ открывать одной дугой: меньше микро-сбросов и ступеней.")
+            steps_you = _num((coach.get("style") or {}).get("throttle_steps"))
+            steps_ref = _num((coach.get("style") or {}).get("ref_throttle_steps"))
+            if steps_you > steps_ref + 1.5:
+                actions.append("Газ открывать одной дугой: меньше микро-сбросов и ступеней.")
     else:
         losses = (rep.get("corner_loss") or [])[:3]
         for c in losses:

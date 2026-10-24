@@ -11,6 +11,7 @@ import { renderDrivers } from "./views/drivers.js";
 import { renderSession } from "./views/session.js";
 import { renderCompare } from "./views/compare.js";
 import { renderSettings } from "./views/settings.js";
+import { renderCoach } from "./views/coach.js";
 
 const NAV = [
   { key: "garage", label: "Гараж", icon: "car", href: "#/garage" },
@@ -18,6 +19,15 @@ const NAV = [
   { key: "compare", label: "Сравнение", icon: "compare", href: "#/compare" },
   { key: "settings", label: "Настройки", icon: "settings", href: "#/settings" },
 ];
+
+function navItems() {
+  if (!channel.isBeta()) return NAV;
+  return [
+    NAV[0], NAV[1],
+    { key: "coach", label: "Эталоны", icon: "target", href: "#/coach" },
+    NAV[2], NAV[3],
+  ];
+}
 
 function parseRoute() {
   const raw = location.hash.replace(/^#\/?/, "");
@@ -29,12 +39,12 @@ function parseRoute() {
 function navFor(parts) {
   const first = parts[0] || "garage";
   if (first === "session" || first === "setup") return "garage";
-  return NAV.some((n) => n.key === first) ? first : "garage";
+  return navItems().some((n) => n.key === first) ? first : "garage";
 }
 
 function renderNav(active) {
   const nav = document.getElementById("nav");
-  nav.innerHTML = NAV.map((item) => `
+  nav.innerHTML = navItems().map((item) => `
     <a class="nav-item${item.key === active ? " active" : ""}" href="${item.href}">
       ${icon(item.icon, 18)}
       <span>${item.label}</span>
@@ -47,6 +57,7 @@ function updateCounts() {
   const counts = {
     garage: store.sessions.length || "",
     drivers: store.drivers.length || "",
+    coach: store.references?.length || "",
   };
   for (const [key, value] of Object.entries(counts)) {
     const el = document.querySelector(`[data-count="${key}"]`);
@@ -59,9 +70,10 @@ function renderSidebarFoot() {
   if (!el) return;
   const stats = store.stats || {};
   const tag = channel.isBeta() ? " · beta" : "";
+  const refs = stats.references ? ` · <b>${stats.references}</b> эталонов` : "";
   el.innerHTML = `
     <div class="source"><span class="source-dot"></span><span class="txt">Локальная телеметрия</span></div>
-    <div class="db-info"><b>${stats.sessions || 0}</b> сессий · <b>${stats.clean_laps || 0}</b> чистых кругов<br>
+    <div class="db-info"><b>${stats.sessions || 0}</b> сессий · <b>${stats.clean_laps || 0}</b> чистых кругов${refs}<br>
     ${stats.laps || 0} кругов · ${(stats.km || 0).toFixed(0)} км · v${store.appVersion}${tag}</div>`;
 }
 
@@ -99,6 +111,7 @@ async function route() {
       return await renderSession(view, parts[1], parts[2] || "analysis", params);
     }
     if (active === "garage") return await renderGarage(view, params);
+    if (active === "coach") return await renderCoach(view, params);
     if (active === "drivers") return await renderDrivers(view, params);
     if (active === "compare") return await renderCompare(view, params);
     if (active === "settings") return await renderSettings(view, params);

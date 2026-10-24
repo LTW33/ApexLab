@@ -3,6 +3,13 @@ import { icon } from "./util.js";
 
 export const THEMES = [
   {
+    id: "graphite",
+    name: "Графит",
+    hint: "серый металл",
+    dots: ["#e4e7ea", "#8a9199", "#3c4147"],
+    preview: { bg: "#141517", panel: "#1d1f22", line: "#2e3237", accent: "#e4e7ea", text: "#f0f2f4" },
+  },
+  {
     id: "carbon",
     name: "Карбон",
     hint: "ночной лайм",
@@ -43,13 +50,6 @@ export const THEMES = [
     hint: "чёрное и белое",
     dots: ["#111111", "#8a8a8a", "#d6d6d6"],
     preview: { bg: "#ffffff", panel: "#fafafa", line: "#dcdcdc", accent: "#111111", text: "#0a0a0a" },
-  },
-  {
-    id: "graphite",
-    name: "Графит",
-    hint: "серый металл",
-    dots: ["#e4e7ea", "#8a9199", "#3c4147"],
-    preview: { bg: "#141517", panel: "#1d1f22", line: "#2e3237", accent: "#e4e7ea", text: "#f0f2f4" },
   },
 ];
 

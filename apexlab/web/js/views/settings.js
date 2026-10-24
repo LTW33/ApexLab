@@ -133,7 +133,7 @@ export async function renderSettings(root) {
       <div class="panel">
         <div class="panel-head"><div class="panel-title">${icon("target", 16)}Целевые окна</div></div>
         <div class="panel-body" style="display:flex;flex-direction:column;gap:2px">
-          <div class="kv"><span class="k">Горячее давление</span><span class="v">27.6 psi · GT3</span></div>
+          <div class="kv"><span class="k">Горячее давление</span><span class="v">27.2 psi · GT3</span></div>
           <div class="kv"><span class="k">Горячее давление</span><span class="v">27.0 psi · GT4/TCX</span></div>
           <div class="kv"><span class="k">Тормоза, перед</span><span class="v">до 800 °C</span></div>
           <div class="kv"><span class="k">Тормоза, зад</span><span class="v">до 700 °C</span></div>

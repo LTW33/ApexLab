@@ -1473,7 +1473,7 @@ def _raw_value(raw: dict, group: str, key: str, default=None):
 
 # ---------------------------------------------------------------- recommendations
 
-TARGET_PRESS = 27.6  # psi hot, dry GT3
+TARGET_PRESS = 27.2  # psi hot, dry GT3
 # Companion's pressure_base separates the classes: 20.3 psi = GT3/Cup, 17 psi = GT4/TCX.
 TARGET_PRESS_BY_BASE = {20.3: TARGET_PRESS, 17.0: 27.0}
 
@@ -1605,14 +1605,16 @@ def recommendations(report: dict, setup: dict) -> list[dict]:
         changes = []
         if tc1 is not None and int(tc1) < 10:
             changes.append({"label": "TC1", "from": tc1, "to": int(tc1) + 1, "unit": ""})
-        if preload is not None and int(preload) > 0:
+        if preload is not None:
             current = int(preload) * 10 + 20
             changes.append({"label": "Преднатяг", "from": current,
-                            "to": max(current - 10, 20), "unit": "Нм"})
+                            "to": current + 10, "unit": "Нм"})
         add("spin", "mid", "Побороть пробуксовку на выходе",
             f"{spin} эпизодов пробуксовки за сессию.",
             "Задняя ось проскальзывает на выходе из медленных поворотов. "
-            "Начни с TC1 +1 — это дешевле по времени, чем менять механику.",
+            "Начни с TC1 +1 — это дешевле по времени. Если пробуксовка остаётся, "
+            "+10 Нм преднатяга сильнее блокирует дифференциал и ровнее делит момент "
+            "между задними колёсами; в обмен машина станет чуть менее охотной на входе.",
             changes, [{"label": "Пробуксовки", "value": f"{spin}"}])
 
     # --- bottoming

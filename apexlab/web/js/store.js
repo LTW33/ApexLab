@@ -9,6 +9,8 @@ function sessionDate(s) {
 
 export const store = {
   sessions: [],
+  references: [],
+  series: [],
   drivers: [],
   settings: {},
   stats: {},
@@ -22,6 +24,8 @@ export const store = {
     if (this.loaded && !force) return this;
     const data = await api.state();
     this.sessions = data.sessions || [];
+    this.references = data.references || [];
+    this.series = data.series || [];
     this.drivers = data.drivers || [];
     this.settings = data.settings || {};
     this.stats = data.stats || {};
@@ -38,7 +42,16 @@ export const store = {
   },
 
   session(id) {
-    return this.sessions.find((s) => s.id === id);
+    return this.sessions.find((s) => s.id === id)
+      || this.references.find((s) => s.id === id);
+  },
+
+  allSessions() {
+    return [...this.sessions, ...this.references];
+  },
+
+  seriesFor(id) {
+    return this.series.find((g) => (g.sessions || []).includes(id)) || null;
   },
 
   sorted() {

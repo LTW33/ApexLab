@@ -78,8 +78,22 @@ export const api = {
     }),
 
   scan: (folder) => request(`/api/scan?path=${encodeURIComponent(folder || "")}`),
-  importFiles: (paths, driver) =>
-    request("/api/import", { method: "POST", body: { paths, driver } }),
+  importFiles: (paths, driver, reference = false) =>
+    request("/api/import", { method: "POST", body: { paths, driver, reference } }),
+
+  coach: (session, ref) =>
+    request(`/api/coach?session=${encodeURIComponent(session)}&ref=${encodeURIComponent(ref || "")}`),
+  series: (session) =>
+    request(`/api/series?session=${encodeURIComponent(session)}`),
+  learning: () => request("/api/learning"),
+  rebuildLearning: () => request("/api/learning", { method: "POST" }),
+
+  markReference: (sid, reference) =>
+    request(`/api/session/${encodeURIComponent(sid)}`, { method: "PATCH", body: { reference } })
+      .then((data) => {
+        metaCache.delete(sid);
+        return data;
+      }),
 
   setups: (car, track) =>
     request(`/api/setups?car=${encodeURIComponent(car || "")}&track=${encodeURIComponent(track || "")}`),

@@ -10,6 +10,7 @@ import {
 } from "../ui.js";
 import { openImport } from "../importmodal.js";
 import { exportSessionReport } from "../report.js";
+import { channel } from "../channel.js";
 
 const TABS = [
   { key: "analysis", label: "Обзор", icon: "gauge" },
@@ -19,12 +20,27 @@ const TABS = [
   { key: "setup", label: "Сет", icon: "wrench" },
 ];
 
+const BETA_TABS = {
+  coach: { key: "coach", label: "Эталон", icon: "target" },
+  series: { key: "series", label: "Серия", icon: "layers" },
+};
+
+function tabsFor(meta) {
+  if (!channel.isBeta()) return TABS;
+  const tabs = [TABS[0], BETA_TABS.coach, TABS[1], TABS[2]];
+  if (!meta?.reference) tabs.push(BETA_TABS.series);
+  tabs.push(TABS[3], TABS[4]);
+  return tabs;
+}
+
 const TAB_TITLES = {
   analysis: "Разбор сессии",
   line: "Траектория",
   laps: "Круги",
   errors: "Ошибки пилота",
   setup: "Сет и рекомендации",
+  coach: "Эталон и разбор",
+  series: "Серия сессий",
 };
 
 const EVENT_ORDER = ["lock", "spin", "bottom", "brake_temp", "coast"];
@@ -92,6 +108,9 @@ function heroHTML(meta, rep, lapIndex) {
   tags.push(`<span class="badge ${meta.clean_laps ? "lime" : "orange"}">${meta.clean_laps || 0} ${plural(meta.clean_laps || 0, "чистый круг", "чистых круга", "чистых кругов")}</span>`);
   if (!clean) tags.push(`<span class="badge orange">оценка предварительная</span>`);
   if (meta.rates?.speed) tags.push(`<span class="badge grey">${Math.round(meta.rates.speed)} Гц</span>`);
+  if (meta.reference) tags.push(`<span class="badge blue">эталонный лог</span>`);
+  const series = channel.isBeta() ? store.seriesFor(meta.id) : null;
+  if (series && series.count > 1) tags.push(`<span class="badge blue">серия из ${series.count}</span>`);
 
   return `<div class="session-hero">
     <div class="hero-main">
@@ -158,7 +177,7 @@ function statsHTML(meta, rep) {
 }
 
 function tabsHTML(meta, active, lapIndex) {
-  return `<div class="tabs">${TABS.map((t, i) => {
+  return `<div class="tabs">${tabsFor(meta).map((t, i) => {
     const q = lapIndex != null ? `?lap=${lapIndex}` : "";
     const count = t.key === "laps" ? meta.laps.length
       : t.key === "errors" ? sum(EVENT_ORDER.map((k) => meta.report?.events?.[k]?.count || 0))
@@ -370,7 +389,7 @@ function eventTilesHTML(rep) {
 
 function pressureGoal(target) {
   const t = Number(target);
-  return t ? `цель ${t.toFixed(1)} psi` : "цель по классу";
+  return t ? `цель ${t.toFixed(1)} psi` : "цель неизвестна";
 }
 
 function wheelGrid(title, values, kind, target = null) {
@@ -381,12 +400,16 @@ function wheelGrid(title, values, kind, target = null) {
       const v = Number(values[i]) || 0;
       let cls = "";
       let sub = "";
-      const goal = kind === "pressure" ? Number(target) || 27.6 : 0;
+      const goal = kind === "pressure" ? Number(target) || 0 : 0;
       if (kind === "pressure") {
-        if (v > goal + 0.3) cls = "hot";
-        if (v > 0 && v < goal - 0.3) cls = "cold";
-        const d = v - goal;
-        sub = v ? `${d > 0 ? "+" : ""}${d.toFixed(1)}` : "—";
+        if (!goal) {
+          sub = "—";
+        } else {
+          if (v > goal + 0.3) cls = "hot";
+          if (v > 0 && v < goal - 0.3) cls = "cold";
+          const d = v - goal;
+          sub = v ? `${d > 0 ? "+" : ""}${d.toFixed(1)}` : "—";
+        }
       } else if (kind === "brake") {
         if (v > 800) cls = "hot";
         if (v > 0 && v < 380) cls = "cold";
@@ -454,6 +477,291 @@ function analysisHTML(meta, rep, pack) {
       </div>
     </div>
   </div>`;
+}
+
+/* ---------------------------------------------------------------- coach */
+
+function narrativeHTML(narrative) {
+  if (!narrative) return "";
+  const paragraphs = (narrative.paragraphs || []).map((p) => `<p>${esc(p.text)}</p>`).join("");
+  const facts = (narrative.facts || []).length
+    ? `<div class="narrative-facts">${narrative.facts.map((f) => `<span class="badge outline">${esc(f)}</span>`).join("")}</div>`
+    : "";
+  const actions = (narrative.actions || []).length
+    ? `<div class="narrative-plan"><div class="label">Что делать</div><ol>${narrative.actions.map((a) => `<li>${esc(a)}</li>`).join("")}</ol></div>`
+    : "";
+  return `<div class="narrative">
+    <div class="narrative-head">
+      <span class="badge ${narrative.has_reference ? "lime" : "blue"}">${narrative.has_reference ? "разбор от эталона" : "разбор сессии"}</span>
+      <h3>${esc(narrative.headline)}</h3>
+    </div>
+    ${paragraphs}
+    ${facts}
+    ${actions}
+    <div class="narrative-foot">${icon("info", 13)}${esc(narrative.confidence)}</div>
+  </div>`;
+}
+
+function phaseCell(value) {
+  if (value == null || Math.abs(value) < 0.5) return `<span class="dim">—</span>`;
+  return `<span class="${deltaClass(-value)}">${value > 0 ? "+" : "−"}${Math.abs(value).toFixed(0)}</span>`;
+}
+
+function coachTableHTML(coach) {
+  const corners = [...(coach.corners || [])].sort((a, b) => (b.loss || 0) - (a.loss || 0));
+  return `<div class="table-wrap"><table class="table coach-compare">
+    <thead><tr>
+      <th>Поворот</th><th class="num">Потеря</th><th>Фаза</th>
+      <th class="num">Вход Δ</th><th class="num">Апекс Δ</th><th class="num">Выход Δ</th>
+      <th class="num">Тормоз</th><th class="num">Газ 95%</th><th class="num">Передача</th>
+    </tr></thead>
+    <tbody>${corners.map((c) => `<tr class="${(c.loss || 0) > 0.03 ? "coach-loss" : (c.loss || 0) < -0.03 ? "coach-gain" : ""}">
+      <td class="name">${esc(c.name)}<span class="sub">${esc(c.label || "")}</span></td>
+      <td class="num ${deltaClass(c.loss)}">${c.loss != null ? fmtDelta(c.loss) : "—"}</td>
+      <td>${esc(c.phase_label || "—")}</td>
+      <td class="num">${phaseCell(c.phases?.entry)}</td>
+      <td class="num">${phaseCell(c.phases?.apex)}</td>
+      <td class="num">${phaseCell(c.phases?.exit)}</td>
+      <td class="num">${c.you?.brake_m != null ? `${Math.round(c.you.brake_m)}` : "—"} <span class="dim">/ ${c.ref?.brake_m != null ? Math.round(c.ref.brake_m) : "—"}</span></td>
+      <td class="num">${c.you?.throttle_m != null ? `${Math.round(c.you.throttle_m)}` : "—"} <span class="dim">/ ${c.ref?.throttle_m != null ? Math.round(c.ref.throttle_m) : "—"}</span></td>
+      <td class="num">${c.you?.gear ?? "—"} <span class="dim">/ ${c.ref?.gear ?? "—"}</span></td>
+    </tr>`).join("")}</tbody>
+  </table></div>
+  <div class="table-foot hint">Тормоз и газ — расстояние до апекса, м; отрицательное значение — раньше апекса. Формат «ты / эталон».</div>`;
+}
+
+function styleRow(label, you, ref, unit = "м", better = "less") {
+  if (you == null && ref == null) return "";
+  const diff = (Number(you) || 0) - (Number(ref) || 0);
+  const good = better === "less" ? diff < 0 : diff > 0;
+  const cls = Math.abs(diff) < 0.5 ? "" : good ? "delta-neg" : "delta-pos";
+  const suffix = unit ? ` ${unit}` : "";
+  return `<div class="coach-style-row">
+    <span class="k">${label}</span>
+    <span class="v">${you != null ? `${Math.round(you)}${suffix}` : "—"} <span class="dim">/ ${ref != null ? `${Math.round(ref)}${suffix}` : "—"}</span></span>
+    <span class="d ${cls}">${Math.abs(diff) < 0.5 ? "=" : `${diff > 0 ? "+" : "−"}${Math.abs(diff).toFixed(0)}`}</span>
+  </div>`;
+}
+
+function coachHTML(meta, data) {
+  const coach = data.reference;
+  const refs = data.references || [];
+  const profile = data.learning;
+  if (!coach) {
+    return `<div class="section" style="gap:16px">
+      <div class="hint-box warn">${icon("target", 17)}<span><b>Внешнего эталона нет.</b> Загрузи лог быстрого пилота на этой трассе и машине — ApexLab сравнит фазы поворотов и запомнит ориентиры. Пока показываю разбор по твоим сессиям.</span>
+        <a class="btn sm primary" href="#/coach" style="margin-left:auto">${icon("upload", 14)}Открыть эталоны</a></div>
+      <div class="two-col">
+        <div class="panel"><div class="panel-head"><div class="panel-title">${icon("trend", 16)}Разбор</div></div>
+          <div class="panel-body">${narrativeHTML(data.narrative)}</div></div>
+        <div class="panel"><div class="panel-head"><div class="panel-title">${icon("target", 16)}Ориентиры</div>
+          <div class="panel-actions"><span class="panel-sub">ещё не собраны</span></div></div>
+          <div class="panel-body muted" style="font-size:12.5px;line-height:1.7">
+            ${profile ? `Есть профиль по этой трассе и машине: ${(profile.targets || []).length} поворотов.` : "Профиль появится после импорта эталонного лога."}
+          </div></div>
+      </div>
+    </div>`;
+  }
+
+  const ref = coach.reference;
+  const delta = Number(coach.delta) || 0;
+  const refOptions = refs.length > 1
+    ? `<select class="select select-sm" id="coach-ref-select" style="min-width:230px">${refs.map((r) => `<option value="${esc(r.id)}"${r.id === ref.session ? " selected" : ""}>${esc(r.driver)} · ${fmtTime(r.best)} · ${esc(fmtDate(r.date))}</option>`).join("")}</select>`
+    : "";
+  const style = coach.style || {};
+  const types = coach.by_type || {};
+
+  return `<div class="section" style="gap:16px">
+    <div class="panel coach-hero">
+      <div class="coach-hero-main">
+        <div class="eyebrow">ЭТАЛОН · ${esc(ref.driver)}</div>
+        <div class="coach-hero-title">${esc(ref.track || meta.track)} <span class="badge outline">${esc(ref.car || meta.car)}</span></div>
+        <div class="coach-hero-sub">${fmtTime(ref.best)} на круге #${ref.lap} · ${esc(fmtDate(ref.date))}${fmtClock(ref.time) ? ` ${fmtClock(ref.time)}` : ""}</div>
+        ${refOptions}
+      </div>
+      <div class="coach-hero-delta">
+        <div class="k">Отставание</div>
+        <div class="v ${deltaClass(delta)}">${fmtDelta(delta)}</div>
+        <div class="s">${delta > 0 ? "эталон быстрее" : delta < 0 ? "ты быстрее" : "ровно"}</div>
+      </div>
+      <div class="coach-hero-split">
+        <div><div class="k">Потери</div><div class="v delta-pos">${fmtDelta(coach.loss_total || 0)}</div></div>
+        <div><div class="k">Выигрыш</div><div class="v delta-neg">${fmtDelta(coach.gain_total || 0)}</div></div>
+      </div>
+    </div>
+    ${coach.aligned ? "" : `<div class="hint-box warn">${icon("alert", 16)}<span>Длины кругов отличаются на ${Math.abs(coach.distance_delta || 0).toFixed(0)} м — сравнение по дистанции может смещаться.</span></div>`}
+
+    <div class="two-col">
+      <div class="panel">
+        <div class="panel-head"><div class="panel-title">${icon("trend", 16)}Разбор</div>
+          <div class="panel-actions"><a class="btn ghost sm" href="#/coach">Все эталоны</a></div></div>
+        <div class="panel-body">${narrativeHTML(data.narrative)}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div class="panel">
+          <div class="panel-head"><div class="panel-title">${icon("target", 16)}Типы поворотов</div>
+            <div class="panel-actions"><span class="panel-sub">потеря к эталону</span></div></div>
+          <div class="panel-body coach-types">
+            ${["fast", "medium", "slow"].map((key) => {
+              const item = types[key] || {};
+              const label = { fast: "Скоростные", medium: "Средние", slow: "Медленные" }[key];
+              return `<div class="coach-type-row">
+                <span class="k">${label}</span>
+                <span class="v">${item.loss != null ? fmtDelta(item.loss) : "—"}</span>
+                <span class="s">${item.count || 0} ${plural(item.count || 0, "поворот", "поворота", "поворотов")} · ${item.speed != null ? `${Math.round(item.speed)} км/ч` : "—"}</span>
+              </div>`;
+            }).join("")}
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><div class="panel-title">${icon("sliders", 16)}Стиль</div>
+            <div class="panel-actions"><span class="panel-sub">ты / эталон</span></div></div>
+          <div class="panel-body coach-style">
+            ${styleRow("Газ 95%", style.throttle_m, style.ref_throttle_m)}
+            ${styleRow("Растяжка газа", style.throttle_ramp_m, style.ref_throttle_ramp_m)}
+            ${styleRow("Ступени газа", style.throttle_steps, style.ref_throttle_steps, "", "less")}
+            ${styleRow("Тормоз", style.brake_m, style.ref_brake_m)}
+            ${styleRow("Накат", style.coast_m, style.ref_coast_m)}
+            ${styleRow("Коррекции руля", style.steer_corrections, style.ref_steer_corrections, "", "less")}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><div class="panel-title">${icon("map", 16)}Где эталон быстрее</div>
+        <div class="panel-actions"><span class="panel-sub">отсортировано по потере</span></div></div>
+      ${coachTableHTML(coach)}
+    </div>
+
+    ${profile ? `<div class="panel">
+      <div class="panel-head"><div class="panel-title">${icon("db", 16)}Что запомнила ApexLab</div>
+        <div class="panel-actions"><span class="panel-sub">${(profile.targets || []).length} ориентиров · ${profile.sources?.length || 0} ${plural(profile.sources?.length || 0, "источник", "источника", "источников")}</span></div></div>
+      <div class="panel-body tight">${targetRows(profile.targets)}</div>
+    </div>` : ""}
+  </div>`;
+}
+
+/* --------------------------------------------------------------- series */
+
+function seriesHTML(meta, detail) {
+  const series = detail.series || {};
+  const rows = detail.sessions || [];
+  const byId = new Map(rows.map((s) => [s.id, s]));
+  const run = detail.run || [];
+  const corners = detail.corners || [];
+  const short = (sid) => {
+    const row = byId.get(sid);
+    return row ? `${fmtClock(row.time) || fmtDate(row.date)}` : sid.slice(0, 6);
+  };
+  const changeValue = (c, value) => {
+    if (c.key === "best") return fmtTime(value);
+    if (c.key === "average") return fmtShort(value);
+    return value;
+  };
+  const first = rows[0];
+  const last = rows[rows.length - 1];
+  const best = series.best;
+  const totalLaps = series.laps || 0;
+  const bestFirst = first?.best;
+  const bestLast = last?.best;
+  const trend = bestFirst && bestLast ? Number(bestLast) - Number(bestFirst) : null;
+
+  return `<div class="section" style="gap:16px">
+    <div class="kpi-grid">
+      ${kpiSafe("layers", "Серия", `${series.count || 1} ${plural(series.count || 1, "сессия", "сессии", "сессий")}`, `${series.start || "—"} → ${String(series.end || "").slice(11) || "—"}`)}
+      ${kpiSafe("clock", "Круги", String(totalLaps), `${series.clean_laps || 0} чистых`)}
+      ${kpiSafe("trophy", "Лучший", fmtTime(best), series.best_session === meta.id ? "в этой сессии" : "в другой сессии серии")}
+      ${kpiSafe("trend", "Динамика", trend == null ? "—" : fmtDelta(trend), trend == null ? "нужны две сессии" : trend < 0 ? "к концу быстрее" : trend > 0 ? "к концу медленнее" : "ровно")}
+    </div>
+
+    ${(series.count || 1) < 2 ? `<div class="hint-box">${icon("info", 16)}<span><b>Серия пока из одной сессии.</b> Логи на той же трассе, машине и с тем же пилотом, записанные с разницей до 90 минут, объединяются автоматически.</span></div>` : ""}
+
+    <div class="panel">
+      <div class="panel-head"><div class="panel-title">${icon("layers", 16)}Сессии серии</div>
+        <div class="panel-actions"><span class="panel-sub">${series.driver || ""} · ${series.track || ""}</span></div></div>
+      <div class="table-wrap"><table class="table">
+        <thead><tr><th>Когда</th><th class="num">Лучший</th><th class="num">Средний</th><th class="num">Стабильность</th><th class="num">Оценка</th><th class="num">Давление</th><th class="num">Баланс</th><th class="num">Круги</th></tr></thead>
+        <tbody>${rows.map((s) => `<tr class="clickable${s.id === meta.id ? " best" : ""}" data-series-session="${s.id}">
+          <td class="name">${esc(fmtDate(s.date))}${fmtClock(s.time) ? ` · ${fmtClock(s.time)}` : ""}${s.id === meta.id ? ` <span class="badge lime">сейчас</span>` : ""}</td>
+          <td class="num">${fmtTime(s.best)}</td>
+          <td class="num">${s.average ? fmtShort(s.average) : "—"}</td>
+          <td class="num">${s.consistency != null ? `${Math.round(s.consistency)}%` : "—"}</td>
+          <td class="num">${s.score != null ? Math.round(s.score) : "—"}</td>
+          <td class="num">${s.pressures?.length ? avg(s.pressures).toFixed(2) : "—"}</td>
+          <td class="num">${s.balance != null ? Number(s.balance).toFixed(2) : "—"}</td>
+          <td class="num">${s.clean_laps || 0} / ${s.laps || 0}</td>
+        </tr>`).join("")}</tbody>
+      </table></div>
+    </div>
+
+    <div class="two-col">
+      <div class="panel">
+        <div class="panel-head"><div class="panel-title">${icon("map", 16)}Потери по поворотам</div>
+          <div class="panel-actions"><span class="panel-sub">среднее по чистым кругам, к лучшему кругу серии</span></div></div>
+        <div class="table-wrap"><table class="table coach-matrix">
+          <thead><tr><th>Поворот</th>${rows.map((s) => `<th class="num">${esc(short(s.id))}</th>`).join("")}<th class="num">Среднее</th></tr></thead>
+          <tbody>${corners.map((c) => `<tr>
+            <td class="name">${esc(c.name)}<span class="sub">${Math.round(c.start)}–${Math.round(c.end)} м</span></td>
+            ${rows.map((s) => {
+              const cell = c.sessions?.[s.id] || {};
+              return `<td class="num ${deltaClass(cell.loss)}">${cell.loss != null ? fmtDelta(cell.loss) : "—"}</td>`;
+            }).join("")}
+            <td class="num ${deltaClass(c.mean_loss)}">${c.mean_loss != null ? fmtDelta(c.mean_loss) : "—"}</td>
+          </tr>`).join("")}</tbody>
+        </table></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><div class="panel-title">${icon("trend", 16)}Что изменилось</div>
+          <div class="panel-actions"><span class="panel-sub">первая → последняя</span></div></div>
+        <div class="panel-body coach-changes">
+          ${(detail.changes || []).length ? detail.changes.map((c) => `<div class="coach-change">
+            <span class="k">${esc(c.label)}</span>
+            <span class="v">${changeValue(c, c.from)} <span class="dim">→</span> ${changeValue(c, c.to)}</span>
+            <span class="d ${deltaClass(c.key === "best" || c.key === "average" ? c.delta : -c.delta)}">${c.delta > 0 ? "+" : ""}${Number(c.delta).toFixed(c.key === "pressure" || c.key === "balance" ? 2 : c.key === "best" || c.key === "average" ? 3 : 1)}</span>
+          </div>`).join("") : `<span class="muted" style="font-size:12px">Сравнивать нечего: в серии одна сессия.</span>`}
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><div class="panel-title">${icon("clock", 16)}Чистые круги серии</div>
+        <div class="panel-actions"><span class="panel-sub">${run.length} лучших кругов по сессиям</span></div></div>
+      <div class="table-wrap" style="max-height:360px;overflow:auto"><table class="table">
+        <thead><tr><th>Сессия</th><th>Круг</th><th class="num">Время</th><th class="num">Δ к лучшему</th></tr></thead>
+        <tbody>${run.map((l) => `<tr class="clickable" data-run-session="${l.session}" data-run-lap="${l.index}">
+          <td class="name">${esc(fmtDate(l.date))}${fmtClock(l.time) ? ` · ${fmtClock(l.time)}` : ""}</td>
+          <td>#${l.index}</td>
+          <td class="num">${fmtTime(l.time)}</td>
+          <td class="num ${deltaClass(l.delta)}">${l.delta != null ? fmtDelta(l.delta) : "—"}</td>
+        </tr>`).join("")}</tbody>
+      </table></div>
+    </div>
+  </div>`;
+}
+
+function kpiSafe(iconName, label, value, sub) {
+  return `<div class="kpi"><div class="kpi-label">${icon(iconName, 12)}${label}</div><div class="kpi-value">${value}</div><div class="kpi-sub">${sub}</div></div>`;
+}
+
+function targetRows(targets) {
+  if (!targets?.length) {
+    return `<div class="hint-box warn">${icon("alert", 16)}<span>Ориентиры ещё не собраны: нужен эталонный лог с чистыми кругами.</span></div>`;
+  }
+  return `<div class="table-wrap"><table class="table coach-targets">
+    <thead><tr><th>Поворот</th><th class="num">Вход</th><th class="num">Минимум</th><th class="num">Апекс</th><th class="num">Выход</th><th class="num">Тормоз</th><th class="num">Газ 95%</th><th class="num">Передача</th><th class="num">Кругов</th></tr></thead>
+    <tbody>${targets.map((t) => `<tr>
+      <td class="name">${esc(t.name)}<span class="sub">${esc(t.label || "")}</span></td>
+      <td class="num">${Math.round(t.entry || 0)}</td>
+      <td class="num">${Math.round(t.min || 0)}</td>
+      <td class="num">${Math.round(t.apex_speed || 0)}</td>
+      <td class="num">${Math.round(t.exit || 0)}</td>
+      <td class="num">${t.brake_m != null ? `${Math.round(t.brake_m)} м` : "—"}</td>
+      <td class="num">${t.throttle_m != null ? `${Math.round(t.throttle_m)} м` : "—"}</td>
+      <td class="num">${t.gear || "—"}</td>
+      <td class="num">${t.n || 0}</td>
+    </tr>`).join("")}</tbody>
+  </table></div>`;
 }
 
 /* ---------------------------------------------------------------- laps */
@@ -1238,7 +1546,7 @@ export async function renderSession(root, sid, tab = "analysis", params) {
   const meta = await api.session(sid);
   if (!meta) throw new Error("Сессия не найдена");
 
-  const active = TABS.some((t) => t.key === tab) ? tab : "analysis";
+  const active = tabsFor(meta).some((t) => t.key === tab) ? tab : "analysis";
   const rawLap = params?.get("lap");
   let lapIndex = rawLap != null && rawLap !== "" ? Number(rawLap) : NaN;
   if (!Number.isFinite(lapIndex) || !meta.laps.some((l) => l.index === lapIndex)) {
@@ -1316,6 +1624,61 @@ export async function renderSession(root, sid, tab = "analysis", params) {
     mountTelemetry(root, pack, bestPack, deltaChart);
     root.querySelector("#lap-select")?.addEventListener("change", (ev) => {
       goSession(meta.id, "analysis", Number(ev.target.value));
+    });
+    return;
+  }
+
+  if (active === "coach") {
+    let data = null;
+    try {
+      data = await api.coach(meta.id, params?.get("ref") || "");
+    } catch (err) {
+      toast(`Разбор не загрузился: ${err.message}`, "err");
+    }
+    if (!data) {
+      body.innerHTML = emptyState({
+        iconName: "target",
+        title: "Эталон недоступен",
+        text: "Не удалось собрать сравнение. Проверь, что эталонный лог разобран и лежит в «Эталонах».",
+        action: `<a class="btn" href="#/coach">Открыть эталоны</a>`,
+      });
+      return;
+    }
+    body.innerHTML = coachHTML(meta, data);
+    root.querySelector("#coach-ref-select")?.addEventListener("change", (ev) => {
+      location.hash = `#/session/${encodeURIComponent(meta.id)}/coach?ref=${encodeURIComponent(ev.target.value)}`;
+    });
+    return;
+  }
+
+  if (active === "series") {
+    let data = null;
+    try {
+      data = await api.series(meta.id);
+    } catch (err) {
+      toast(`Серия не загрузилась: ${err.message}`, "err");
+    }
+    if (!data) {
+      body.innerHTML = emptyState({
+        iconName: "layers",
+        title: "Серия недоступна",
+        text: "Не удалось собрать круги серии. Открой сессию заново или переимпортируй лог.",
+        action: `<a class="btn" href="#/garage">В гараж</a>`,
+      });
+      return;
+    }
+    body.innerHTML = seriesHTML(meta, data);
+    body.querySelectorAll("[data-series-session]").forEach((row) => {
+      row.addEventListener("click", () => {
+        location.hash = `#/session/${encodeURIComponent(row.dataset.seriesSession)}/series`;
+      });
+    });
+    body.querySelectorAll("[data-run-session]").forEach((row) => {
+      row.addEventListener("click", () => {
+        const sid = row.dataset.runSession;
+        const lap = row.dataset.runLap;
+        location.hash = `#/session/${encodeURIComponent(sid)}/analysis?lap=${encodeURIComponent(lap)}`;
+      });
     });
     return;
   }
