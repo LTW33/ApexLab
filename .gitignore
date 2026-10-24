@@ -1,0 +1,26 @@
+# Данные приложения: библиотека, кэш разбора, сеты, журнал, настройки окна
+apexlab/data/
+
+# Сборка PyInstaller и её артефакты
+apexlab/build/
+release/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Личные файлы, не относящиеся к проекту
+*.mp3
+*.wav
+*.docx
+*.pdf
+
+# Мусор ОС и редакторов
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/
